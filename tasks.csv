@@ -1,0 +1,81 @@
+id,name,milestone,size
+SP_M1_CUST_CREATE,Create customer,M1,M
+SP_M1_CUST_UPDATE,Update customer,M1,S
+SP_M1_CUST_SEARCH,Search customers,M1,M
+SP_M1_CUST_MERGE,Merge customers,M1,L
+SP_M1_CUST_ARCHIVE,Archive customer,M1,S
+SP_M1_ADDR_VALIDATE,Validate address,M1,S
+SP_M1_ADDR_UPSERT,Upsert address,M1,M
+SP_M1_CONTACT_ADD,Add contact,M1,S
+SP_M1_CONTACT_PREF,Update contact prefs,M1,S
+SP_M1_KYC_CHECK,KYC eligibility check,M1,L
+PGM_M1_CUST_BATCH,Customer overnight batch,M1,L
+PGM_M1_CUST_IMPORT,Customer import job,M1,M
+PGM_M1_ADDR_CLEANSE,Address cleanse job,M1,M
+PGM_M1_CONTACT_SYNC,Contact sync job,M1,S
+PGM_M1_KYC_BATCH,KYC batch scorer,M1,L
+PGM_M1_CUST_EXPORT,Customer extract,M1,S
+PGM_M1_DUP_DETECT,Duplicate detection job,M1,M
+PGM_M1_AUDIT_ROLLUP,Customer audit rollup,M1,S
+PGM_M1_PREF_MIGRATE,Preference migration,M1,M
+PGM_M1_CUST_RECON,Customer recon report,M1,S
+SP_M2_ORD_CREATE,Create order,M2,L
+SP_M2_ORD_UPDATE,Update order,M2,M
+SP_M2_ORD_CANCEL,Cancel order,M2,S
+SP_M2_ORD_SEARCH,Search orders,M2,M
+SP_M2_ORD_ALLOCATE,Allocate inventory,M2,L
+SP_M2_ORD_PRICE,Price order lines,M2,M
+SP_M2_ORD_DISCOUNT,Apply discounts,M2,S
+SP_M2_ORD_VALIDATE,Validate order,M2,S
+SP_M2_ORD_HOLD,Place order hold,M2,S
+SP_M2_ORD_RELEASE,Release order hold,M2,S
+PGM_M2_ORD_BATCH,Order overnight batch,M2,L
+PGM_M2_ORD_IMPORT,Order import job,M2,M
+PGM_M2_ALLOC_SWEEP,Allocation sweep,M2,L
+PGM_M2_PRICE_REFRESH,Price refresh job,M2,M
+PGM_M2_ORD_EXPORT,Order extract,M2,S
+PGM_M2_HOLD_EXPIRE,Expire holds job,M2,S
+PGM_M2_ORD_RECON,Order recon report,M2,M
+PGM_M2_BACKORDER,Backorder notifier,M2,S
+PGM_M2_SHIP_PLAN,Shipment planning job,M2,L
+PGM_M2_ORD_AUDIT,Order audit rollup,M2,S
+SP_M3_INV_CREATE,Create invoice,M3,M
+SP_M3_INV_POST,Post invoice,M3,L
+SP_M3_INV_ADJUST,Adjust invoice,M3,S
+SP_M3_INV_VOID,Void invoice,M3,S
+SP_M3_INV_SEARCH,Search invoices,M3,M
+SP_M3_PAY_APPLY,Apply payment,M3,L
+SP_M3_PAY_REVERSE,Reverse payment,M3,M
+SP_M3_CREDIT_ISSUE,Issue credit note,M3,S
+SP_M3_TAX_CALC,Calculate tax,M3,S
+SP_M3_BAL_QUERY,Account balance query,M3,S
+PGM_M3_INV_BATCH,Invoice overnight batch,M3,L
+PGM_M3_INV_IMPORT,Invoice import job,M3,M
+PGM_M3_PAY_MATCH,Payment matching job,M3,L
+PGM_M3_TAX_REFRESH,Tax rate refresh,M3,S
+PGM_M3_INV_EXPORT,Invoice extract,M3,S
+PGM_M3_DUNNING,Dunning notice job,M3,M
+PGM_M3_AR_AGING,AR aging report,M3,M
+PGM_M3_GL_FEED,GL feed interface,M3,L
+PGM_M3_CREDIT_SWEEP,Credit note sweep,M3,S
+PGM_M3_INV_AUDIT,Invoice audit rollup,M3,S
+SP_M4_FULFILL_START,Start fulfillment,M4,M
+SP_M4_FULFILL_PACK,Pack shipment,M4,M
+SP_M4_FULFILL_SHIP,Confirm shipment,M4,L
+SP_M4_FULFILL_TRACK,Update tracking,M4,S
+SP_M4_RMA_CREATE,Create RMA,M4,M
+SP_M4_RMA_RECEIVE,Receive RMA,M4,S
+SP_M4_RMA_REFUND,Refund RMA,M4,L
+SP_M4_WH_RESERVE,Warehouse reserve,M4,S
+SP_M4_WH_RELEASE,Warehouse release,M4,S
+SP_M4_CARRIER_RATE,Carrier rate quote,M4,S
+PGM_M4_FULFILL_BATCH,Fulfillment overnight batch,M4,L
+PGM_M4_SHIP_LABEL,Shipping label job,M4,M
+PGM_M4_TRACK_POLL,Carrier tracking poll,M4,M
+PGM_M4_RMA_SWEEP,RMA aging sweep,M4,S
+PGM_M4_WH_RECON,Warehouse recon,M4,M
+PGM_M4_SHIP_EXPORT,Shipment extract,M4,S
+PGM_M4_SLA_MONITOR,Fulfillment SLA monitor,M4,M
+PGM_M4_RETURN_LABEL,Return label job,M4,S
+PGM_M4_CARRIER_FEED,Carrier EDI feed,M4,L
+PGM_M4_FULFILL_AUDIT,Fulfillment audit rollup,M4,S

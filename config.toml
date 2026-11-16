@@ -1,0 +1,185 @@
+# GanttGen project configuration (defaults: config.toml next to ganttgen.py)
+
+title = "Stored Procedure Delivery Plan"
+milestone_align = "implement"   # "implement" | "test"
+# false = no same-team overlap within a milestone (per-team pipeline); milestones are
+# independent so same-team work may overload across milestones.
+# true = each SP is independent; same-team overlap allowed within a milestone too.
+allow_team_overload = false
+
+# Monday=0 … Sunday=6 — HK general holidays treat Sunday as weekly rest;
+# gazetted Saturdays are listed under [[holidays]].
+weekends = [6]
+
+[milestones]
+M1 = 2026-11-30
+M2 = 2026-12-16
+M3 = 2027-01-18
+M4 = 2027-02-17
+
+[sizing.S]
+design = 1
+implement = 1
+test = 1
+
+[sizing.M]
+design = 3
+implement = 3
+test = 3
+
+[sizing.L]
+design = 5
+implement = 5
+test = 5
+
+[teams.design]
+label = "Design"
+color = "#3d6b8c"
+
+[teams.implement]
+label = "Implement"
+color = "#c4783a"
+
+[teams.test]
+label = "Test"
+color = "#4a7c59"
+
+# Hong Kong general holidays (GovHK gazette)
+# https://www.gov.hk/en/about/abouthk/holiday/2026.htm
+# https://www.gov.hk/en/about/abouthk/holiday/2027.htm
+
+[[holidays]]
+date = 2026-01-01
+name = "The first day of January"
+
+[[holidays]]
+date = 2026-02-17
+name = "Lunar New Year's Day"
+
+[[holidays]]
+date = 2026-02-18
+name = "The second day of Lunar New Year"
+
+[[holidays]]
+date = 2026-02-19
+name = "The third day of Lunar New Year"
+
+[[holidays]]
+date = 2026-04-03
+name = "Good Friday"
+
+[[holidays]]
+date = 2026-04-04
+name = "The day following Good Friday"
+
+[[holidays]]
+date = 2026-04-06
+name = "The day following Ching Ming Festival"
+
+[[holidays]]
+date = 2026-04-07
+name = "The day following Easter Monday"
+
+[[holidays]]
+date = 2026-05-01
+name = "Labour Day"
+
+[[holidays]]
+date = 2026-05-25
+name = "The day following the Birthday of the Buddha"
+
+[[holidays]]
+date = 2026-06-19
+name = "Tuen Ng Festival"
+
+[[holidays]]
+date = 2026-07-01
+name = "HKSAR Establishment Day"
+
+[[holidays]]
+date = 2026-09-26
+name = "The day following the Chinese Mid-Autumn Festival"
+
+[[holidays]]
+date = 2026-10-01
+name = "National Day"
+
+[[holidays]]
+date = 2026-10-19
+name = "The day following Chung Yeung Festival"
+
+[[holidays]]
+date = 2026-12-25
+name = "Christmas Day"
+
+[[holidays]]
+date = 2026-12-26
+name = "The first weekday after Christmas Day"
+
+[[holidays]]
+date = 2027-01-01
+name = "The first day of January"
+
+[[holidays]]
+date = 2027-02-06
+name = "Lunar New Year's Day"
+
+[[holidays]]
+date = 2027-02-08
+name = "The third day of Lunar New Year"
+
+[[holidays]]
+date = 2027-02-09
+name = "The fourth day of Lunar New Year"
+
+[[holidays]]
+date = 2027-03-26
+name = "Good Friday"
+
+[[holidays]]
+date = 2027-03-27
+name = "The day following Good Friday"
+
+[[holidays]]
+date = 2027-03-29
+name = "Easter Monday"
+
+[[holidays]]
+date = 2027-04-05
+name = "Ching Ming Festival"
+
+[[holidays]]
+date = 2027-05-01
+name = "Labour Day"
+
+[[holidays]]
+date = 2027-05-13
+name = "The Birthday of the Buddha"
+
+[[holidays]]
+date = 2027-06-09
+name = "Tuen Ng Festival"
+
+[[holidays]]
+date = 2027-07-01
+name = "HKSAR Establishment Day"
+
+[[holidays]]
+date = 2027-09-16
+name = "The day following the Chinese Mid-Autumn Festival"
+
+[[holidays]]
+date = 2027-10-01
+name = "National Day"
+
+[[holidays]]
+date = 2027-10-08
+name = "Chung Yeung Festival"
+
+[[holidays]]
+date = 2027-12-25
+name = "Christmas Day"
+
+[[holidays]]
+date = 2027-12-27
+name = "The first weekday after Christmas Day"
