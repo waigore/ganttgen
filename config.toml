@@ -1,11 +1,11 @@
 # GanttGen project configuration (defaults: config.toml next to ganttgen.py)
 
 title = "Stored Procedure Delivery Plan"
-milestone_align = "implement"   # "implement" | "test"
-# false = no same-team overlap within a milestone (per-team pipeline); milestones are
-# independent so same-team work may overload across milestones.
-# true = each SP is independent; same-team overlap allowed within a milestone too.
-allow_team_overload = false
+milestone_align = "implement"   # "implement" | "test" (used by schedule_mode = "align")
+# compress = ASAP from project_start across all milestones (default).
+# align = pack per milestone and pin last SP to the milestone date.
+schedule_mode = "compress"   # "compress" | "align"
+project_start = 2026-09-01   # required for compress
 
 # Monday=0 … Sunday=6 — HK general holidays treat Sunday as weekly rest;
 # gazetted Saturdays are listed under [[holidays]].
@@ -35,14 +35,17 @@ test = 5
 [teams.design]
 label = "Design"
 color = "#3d6b8c"
+capacity = 1
 
 [teams.implement]
 label = "Implement"
 color = "#c4783a"
+capacity = 3
 
 [teams.test]
 label = "Test"
 color = "#4a7c59"
+capacity = 3
 
 # Hong Kong general holidays (GovHK gazette)
 # https://www.gov.hk/en/about/abouthk/holiday/2026.htm

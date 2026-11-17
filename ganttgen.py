@@ -36,6 +36,7 @@ class TeamStyle:
     key: str
     label: str
     color: str
+    capacity: int
 
 
 @dataclass(frozen=True)
@@ -47,11 +48,15 @@ class TaskRow:
     index: int  # CSV order
 
 
+DEFAULT_CAPACITIES = {"design": 1, "implement": 3, "test": 3}
+
+
 @dataclass
 class Config:
     title: str
     milestone_align: str
-    allow_team_overload: bool
+    schedule_mode: str  # "compress" | "align"
+    project_start: date | None  # required for compress
     weekends: set[int]
     milestones: dict[str, date]
     sizing: dict[str, dict[str, int]]
@@ -112,6 +117,30 @@ def load_config(path: Path) -> Config:
     if align not in {"implement", "test"}:
         raise SystemExit('milestone_align must be "implement" or "test"')
 
+    if "allow_team_overload" in raw:
+        raise SystemExit(
+            "allow_team_overload was removed; use teams.*.capacity and "
+            'schedule_mode ("compress" | "align") instead'
+        )
+    if "capacity_scope" in raw:
+        raise SystemExit(
+            "capacity_scope was removed; use schedule_mode "
+            '("compress" | "align") instead'
+        )
+
+    mode = str(raw.get("schedule_mode", "compress")).lower()
+    if mode not in {"compress", "align"}:
+        raise SystemExit('schedule_mode must be "compress" or "align"')
+
+    project_start: date | None = None
+    if "project_start" in raw and raw["project_start"] is not None:
+        project_start = _parse_date(raw["project_start"], "project_start")
+    if mode == "compress":
+        if project_start is None:
+            raise SystemExit(
+                'project_start is required when schedule_mode = "compress"'
+            )
+
     weekends = {int(d) for d in raw.get("weekends", [5, 6])}
     if any(d < 0 or d > 6 for d in weekends):
         raise SystemExit("weekends entries must be 0 (Mon) … 6 (Sun)")
@@ -140,10 +169,20 @@ def load_config(path: Path) -> Config:
     teams: dict[str, TeamStyle] = {}
     for phase in PHASES:
         t = teams_raw.get(phase) or {}
+        if not isinstance(t, dict):
+            raise SystemExit(f"teams.{phase} must be a table")
+        cap_raw = t.get("capacity", DEFAULT_CAPACITIES[phase])
+        try:
+            capacity = int(cap_raw)
+        except (TypeError, ValueError):
+            raise SystemExit(f"teams.{phase}.capacity must be an integer >= 1") from None
+        if capacity < 1:
+            raise SystemExit(f"teams.{phase}.capacity must be an integer >= 1")
         teams[phase] = TeamStyle(
             key=phase,
             label=str(t.get("label", phase.title())),
             color=str(t.get("color", "#666666")),
+            capacity=capacity,
         )
 
     holidays: list[Holiday] = []
@@ -161,7 +200,8 @@ def load_config(path: Path) -> Config:
     return Config(
         title=str(raw.get("title", "Delivery Plan")),
         milestone_align=align,
-        allow_team_overload=bool(raw.get("allow_team_overload", False)),
+        schedule_mode=mode,
+        project_start=project_start,
         weekends=weekends,
         milestones=milestones,
         sizing=sizing,
@@ -175,7 +215,8 @@ def load_tasks(path: Path, config: Config) -> list[TaskRow]:
         raise SystemExit(f"Tasks CSV not found: {path}")
     required = {"id", "name", "milestone", "size"}
     tasks: list[TaskRow] = []
-    with path.open(newline="", encoding="utf-8") as fh:
+    # utf-8-sig strips a leading BOM so Excel-exported CSVs still match headers.
+    with path.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh)
         if reader.fieldnames is None:
             raise SystemExit("tasks CSV is empty")
@@ -202,9 +243,17 @@ def load_tasks(path: Path, config: Config) -> list[TaskRow]:
             )
     if not tasks:
         raise SystemExit("tasks CSV has no data rows")
-    ids = [t.id for t in tasks]
-    if len(ids) != len(set(ids)):
-        raise SystemExit("tasks CSV contains duplicate id values")
+    by_id: dict[str, list[int]] = {}
+    for t in tasks:
+        # CSV line number: header is line 1, first data row is line 2 → index + 2
+        by_id.setdefault(t.id, []).append(t.index + 2)
+    dups = {tid: lines for tid, lines in by_id.items() if len(lines) > 1}
+    if dups:
+        detail = "; ".join(
+            f"{tid} on lines {', '.join(str(n) for n in lines)}"
+            for tid, lines in sorted(dups.items())
+        )
+        raise SystemExit(f"tasks CSV contains duplicate id values: {detail}")
     return tasks
 
 
@@ -223,9 +272,10 @@ def snap_back_to_working(d: date, config: Config) -> date:
     return d
 
 
-def prev_working(d: date, config: Config) -> date:
-    d -= timedelta(days=1)
-    return snap_back_to_working(d, config)
+def snap_forward_to_working(d: date, config: Config) -> date:
+    while not is_working(d, config):
+        d += timedelta(days=1)
+    return d
 
 
 def add_working_days(start: date, n: int, config: Config) -> date:
@@ -241,18 +291,33 @@ def add_working_days(start: date, n: int, config: Config) -> date:
     return d
 
 
-def span_ending_on(end: date, duration: int, config: Config) -> tuple[date, date]:
-    """Working-day span of `duration` days ending on `end` (must be working)."""
-    if duration < 1:
-        raise ValueError("duration must be >= 1")
-    end = snap_back_to_working(end, config)
-    start = end
-    remaining = duration - 1
-    while remaining > 0:
-        start -= timedelta(days=1)
-        if is_working(start, config):
-            remaining -= 1
-    return start, end
+def shift_working_days(d: date, n: int, config: Config) -> date:
+    """Move `d` by n working days (n may be negative). `d` should be working."""
+    if n == 0:
+        return d
+    if n > 0:
+        return add_working_days(d, n, config)
+    stepped = 0
+    while stepped < -n:
+        d -= timedelta(days=1)
+        if is_working(d, config):
+            stepped += 1
+    return d
+
+
+def working_day_delta(a: date, b: date, config: Config) -> int:
+    """Signed working-day steps from a to b (both working). shift(a, delta) == b."""
+    if a == b:
+        return 0
+    if b > a:
+        n = 0
+        d = a
+        while d < b:
+            d += timedelta(days=1)
+            if is_working(d, config):
+                n += 1
+        return n
+    return -working_day_delta(b, a, config)
 
 
 def iter_days(start: date, end: date):
@@ -284,209 +349,184 @@ def _make_subtasks(tasks: list[TaskRow], config: Config) -> list[SubTask]:
     return out
 
 
-def _successors_pipeline(tasks: list[TaskRow]) -> dict[str, list[str]]:
-    """Finish-to-start edges for mode A (no overload)."""
-    succ: dict[str, list[str]] = {}
+Occupancy = dict[str, dict[date, int]]  # phase -> day -> count
 
-    def link(a: str, b: str) -> None:
-        succ.setdefault(a, []).append(b)
 
+def _empty_occupancy() -> Occupancy:
+    return {p: {} for p in PHASES}
+
+
+def iter_working_days(start: date, end: date, config: Config):
+    d = start
+    while d <= end:
+        if is_working(d, config):
+            yield d
+        d += timedelta(days=1)
+
+
+def _capacity_fits(
+    occupancy: Occupancy,
+    phase: str,
+    start: date,
+    end: date,
+    capacity: int,
+    config: Config,
+) -> bool:
+    for d in iter_working_days(start, end, config):
+        if occupancy[phase].get(d, 0) >= capacity:
+            return False
+    return True
+
+
+def _capacity_book(
+    occupancy: Occupancy,
+    phase: str,
+    start: date,
+    end: date,
+    config: Config,
+) -> None:
+    for d in iter_working_days(start, end, config):
+        occupancy[phase][d] = occupancy[phase].get(d, 0) + 1
+
+
+def _find_slot(
+    phase: str,
+    not_before: date,
+    duration: int,
+    occupancy: Occupancy,
+    capacity: int,
+    config: Config,
+) -> tuple[date, date]:
+    start = snap_forward_to_working(not_before, config)
+    # Bound search: durations are small; avoid infinite loops on bad input.
+    for _ in range(20000):
+        end = add_working_days(start, duration - 1, config)
+        if _capacity_fits(occupancy, phase, start, end, capacity, config):
+            return start, end
+        start = add_working_days(start, 1, config)
+    raise SystemExit(
+        f"could not place {phase} ({duration}d) under capacity {capacity} "
+        f"starting from {not_before.isoformat()}"
+    )
+
+
+def _place_asap(
+    tasks: list[TaskRow],
+    config: Config,
+    by_key: dict[str, SubTask],
+    occupancy: Occupancy,
+    earliest: date,
+) -> dict[str, tuple[date, date]]:
+    """Greedy CSV-order ASAP placement; books into occupancy."""
+    placements: dict[str, tuple[date, date]] = {}
     for t in tasks:
-        link(f"{t.id}:design", f"{t.id}:implement")
-        link(f"{t.id}:implement", f"{t.id}:test")
-    for a, b in zip(tasks, tasks[1:]):
+        prev_phase_end: date | None = None
         for phase in PHASES:
-            link(f"{a.id}:{phase}", f"{b.id}:{phase}")
-    return succ
+            k = f"{t.id}:{phase}"
+            dur = by_key[k].duration
+            not_before = earliest
+            if prev_phase_end is not None:
+                after_pred = add_working_days(prev_phase_end, 1, config)
+                if after_pred > not_before:
+                    not_before = after_pred
+            start, end = _find_slot(
+                phase,
+                not_before,
+                dur,
+                occupancy,
+                config.teams[phase].capacity,
+                config,
+            )
+            _capacity_book(occupancy, phase, start, end, config)
+            placements[k] = (start, end)
+            prev_phase_end = end
+    return placements
 
 
-def _successors_independent(tasks: list[TaskRow]) -> dict[str, list[str]]:
-    """Finish-to-start edges for mode B (overload allowed)."""
-    succ: dict[str, list[str]] = {}
-    for t in tasks:
-        succ.setdefault(f"{t.id}:design", []).append(f"{t.id}:implement")
-        succ.setdefault(f"{t.id}:implement", []).append(f"{t.id}:test")
-    return succ
+def _apply_placements(
+    placements: dict[str, tuple[date, date]],
+    by_key: dict[str, SubTask],
+    delta: int,
+    config: Config,
+) -> None:
+    for k, (start, end) in placements.items():
+        by_key[k].start = shift_working_days(start, delta, config)
+        by_key[k].end = shift_working_days(end, delta, config)
 
 
-def _topo_reverse(keys: list[str], succ: dict[str, list[str]]) -> list[str]:
-    """Reverse topological order (sinks first)."""
-    indeg = {k: 0 for k in keys}
-    for u in keys:
-        for v in succ.get(u, []):
-            if v in indeg:
-                indeg[v] += 1
-    # Kahn forward, then reverse
-    queue = [k for k, d in indeg.items() if d == 0]
-    order: list[str] = []
-    pending = dict(indeg)
-    head = 0
-    while head < len(queue):
-        u = queue[head]
-        head += 1
-        order.append(u)
-        for v in succ.get(u, []):
-            if v not in pending:
-                continue
-            pending[v] -= 1
-            if pending[v] == 0:
-                queue.append(v)
-    if len(order) != len(keys):
-        raise SystemExit("dependency cycle detected in schedule graph")
-    order.reverse()
-    return order
-
-
-def _schedule_milestone(
+def _schedule_align(
     tasks: list[TaskRow],
     config: Config,
     by_key: dict[str, SubTask],
 ) -> None:
+    """Per-milestone capacity; ASAP pack then shift so pin hits milestone."""
     if not tasks:
         return
     ms = tasks[0].milestone
-    milestone_date = config.milestones[ms]
-    pin_phase = config.milestone_align
-    pin_key = f"{tasks[-1].id}:{pin_phase}"
-
-    if config.allow_team_overload:
-        succ = _successors_independent(tasks)
-    else:
-        succ = _successors_pipeline(tasks)
-
-    keys = [f"{t.id}:{p}" for t in tasks for p in PHASES]
-    # Latest finish / latest start
-    lf: dict[str, date] = {}
-    ls: dict[str, date] = {}
-
-    pin_end = snap_back_to_working(milestone_date, config)
-    lf[pin_key] = pin_end
-    start, end = span_ending_on(pin_end, by_key[pin_key].duration, config)
-    ls[pin_key] = start
-    assert end == pin_end
-
-    for key in _topo_reverse(keys, succ):
-        if key == pin_key:
-            continue
-        successors = [s for s in succ.get(key, []) if s in ls]
-        if not successors and key not in lf:
-            # Floating sink (e.g. test when align=implement on last SP only,
-            # or unused). Schedule immediately after its predecessor later.
-            continue
-        if successors:
-            # Must finish the working day before the earliest successor start.
-            candidate_end = min(prev_working(ls[s], config) for s in successors)
-            if key in lf:
-                lf[key] = min(lf[key], candidate_end)
-            else:
-                lf[key] = candidate_end
-        if key not in lf:
-            continue
-        st, en = span_ending_on(lf[key], by_key[key].duration, config)
-        ls[key] = st
-        lf[key] = en
-
-    # Forward-fill any remaining (e.g. test after implement pin on last SP,
-    # and any earlier tests already constrained). For overload mode each SP
-    # is independent — pin every SP's align phase to the milestone.
-    if config.allow_team_overload:
-        for t in tasks:
-            pk = f"{t.id}:{pin_phase}"
-            if pk not in ls:
-                st, en = span_ending_on(pin_end, by_key[pk].duration, config)
-                ls[pk] = st
-                lf[pk] = en
-            # design / other phases via reverse from implement/test chain
-            for phase in reversed(PHASES):
-                k = f"{t.id}:{phase}"
-                if k in ls:
-                    continue
-                # find successor within SP
-                if phase == "design":
-                    succ_k = f"{t.id}:implement"
-                elif phase == "implement":
-                    succ_k = f"{t.id}:test"
-                else:
-                    # test with no lf: starts day after implement ends
-                    pred = f"{t.id}:implement"
-                    if pred not in lf:
-                        raise SystemExit(f"cannot schedule {k}")
-                    st = add_working_days(lf[pred], 1, config)
-                    en = add_working_days(st, by_key[k].duration - 1, config)
-                    ls[k] = st
-                    lf[k] = en
-                    continue
-                if succ_k not in ls:
-                    raise SystemExit(f"cannot schedule {k}: missing {succ_k}")
-                end = prev_working(ls[succ_k], config)
-                st, en = span_ending_on(end, by_key[k].duration, config)
-                ls[k] = st
-                lf[k] = en
-
-    # Pipeline mode: tests after an implement pin still need dates.
-    # Any key still missing: if it has a direct predecessor finished, place after.
-    missing = [k for k in keys if k not in ls]
-    # Iterate until stable (short chains).
-    for _ in range(len(keys) + 1):
-        progress = False
-        still = []
-        for k in missing:
-            stask = by_key[k]
-            phase = stask.phase
-            # Prefer predecessor within SP
-            pred = None
-            if phase == "implement":
-                pred = f"{stask.sp_id}:design"
-            elif phase == "test":
-                pred = f"{stask.sp_id}:implement"
-            # Same-team previous SP
-            team_pred = None
-            idx = next(i for i, t in enumerate(tasks) if t.id == stask.sp_id)
-            if idx > 0:
-                team_pred = f"{tasks[idx - 1].id}:{phase}"
-
-            pred_end_candidates: list[date] = []
-            if pred and pred in lf:
-                pred_end_candidates.append(lf[pred])
-            if team_pred and team_pred in lf and not config.allow_team_overload:
-                pred_end_candidates.append(lf[team_pred])
-
-            # Also constrained by successors already placed
-            succ_starts = [ls[s] for s in succ.get(k, []) if s in ls]
-            if succ_starts:
-                end = min(prev_working(s, config) for s in succ_starts)
-                st, en = span_ending_on(end, stask.duration, config)
-                # Ensure after predecessors
-                if pred_end_candidates:
-                    earliest_start = add_working_days(
-                        max(pred_end_candidates), 1, config
-                    )
-                    if st < earliest_start:
-                        st = earliest_start
-                        en = add_working_days(st, stask.duration - 1, config)
-                ls[k] = st
-                lf[k] = en
-                progress = True
-            elif pred_end_candidates:
-                st = add_working_days(max(pred_end_candidates), 1, config)
-                en = add_working_days(st, stask.duration - 1, config)
-                ls[k] = st
-                lf[k] = en
-                progress = True
-            else:
-                still.append(k)
-        missing = [k for k in still if k not in ls]
-        if not progress:
-            break
-
-    if missing:
+    pin_key = f"{tasks[-1].id}:{config.milestone_align}"
+    pin_end = snap_back_to_working(config.milestones[ms], config)
+    placements = _place_asap(tasks, config, by_key, _empty_occupancy(), pin_end)
+    if pin_key not in placements:
+        raise SystemExit(f"pin key missing from schedule: {pin_key}")
+    delta = working_day_delta(placements[pin_key][1], pin_end, config)
+    _apply_placements(placements, by_key, delta, config)
+    if by_key[pin_key].end != pin_end:
         raise SystemExit(
-            f"could not schedule subtasks for milestone {ms}: {', '.join(missing)}"
+            f"failed to align {pin_key} to {pin_end.isoformat()} "
+            f"(got {by_key[pin_key].end.isoformat()})"
         )
 
-    for k in keys:
-        by_key[k].start = ls[k]
-        by_key[k].end = lf[k]
+
+def _schedule_compress(
+    tasks: list[TaskRow],
+    config: Config,
+    by_key: dict[str, SubTask],
+) -> None:
+    """Global capacity; ready-queue ASAP from project_start across milestones."""
+    assert config.project_start is not None
+    project_start = snap_forward_to_working(config.project_start, config)
+    csv_index = {t.id: t.index for t in tasks}
+    phase_index = {p: i for i, p in enumerate(PHASES)}
+    pred_phase = {"design": None, "implement": "design", "test": "implement"}
+
+    occupancy = _empty_occupancy()
+    pending = {f"{t.id}:{p}" for t in tasks for p in PHASES}
+    placed: dict[str, tuple[date, date]] = {}
+
+    while pending:
+        best: tuple[date, int, int, str, date] | None = None
+        for key in pending:
+            st = by_key[key]
+            pred = pred_phase[st.phase]
+            if pred is None:
+                not_before = project_start
+            else:
+                pred_key = f"{st.sp_id}:{pred}"
+                if pred_key not in placed:
+                    continue
+                not_before = add_working_days(placed[pred_key][1], 1, config)
+            start, end = _find_slot(
+                st.phase,
+                not_before,
+                st.duration,
+                occupancy,
+                config.teams[st.phase].capacity,
+                config,
+            )
+            cand = (start, csv_index[st.sp_id], phase_index[st.phase], key, end)
+            if best is None or cand < best:
+                best = cand
+        if best is None:
+            raise SystemExit(
+                "compress schedule stuck — dependency cycle or empty task set"
+            )
+        start, _csv, _ph, key, end = best
+        st = by_key[key]
+        _capacity_book(occupancy, st.phase, start, end, config)
+        placed[key] = (start, end)
+        by_key[key].start = start
+        by_key[key].end = end
+        pending.remove(key)
 
 
 def build_schedule(tasks: list[TaskRow], config: Config) -> Schedule:
@@ -497,14 +537,16 @@ def build_schedule(tasks: list[TaskRow], config: Config) -> Schedule:
     for t in tasks:
         by_ms.setdefault(t.milestone, []).append(t)
 
-    # Preserve milestone order as first appearance in CSV
     ms_order: list[str] = []
     for t in tasks:
         if t.milestone not in ms_order:
             ms_order.append(t.milestone)
 
-    for ms in ms_order:
-        _schedule_milestone(by_ms[ms], config, by_key)
+    if config.schedule_mode == "compress":
+        _schedule_compress(tasks, config, by_key)
+    else:
+        for ms in ms_order:
+            _schedule_align(by_ms[ms], config, by_key)
 
     starts = [s.start for s in subtasks if s.start]
     ends = [s.end for s in subtasks if s.end]
@@ -513,8 +555,7 @@ def build_schedule(tasks: list[TaskRow], config: Config) -> Schedule:
         raise SystemExit("schedule produced no dates")
     range_start = min(starts)
     range_end = max(ends)
-    # pad a few calendar days for chart margins
-    range_start -= timedelta(days=range_start.weekday())  # back to week start-ish
+    range_start -= timedelta(days=range_start.weekday())
     while range_start.weekday() != 0:
         range_start -= timedelta(days=1)
     return Schedule(
@@ -587,17 +628,30 @@ def render_html(schedule: Schedule) -> str:
         else:
             months[-1] = (label, months[-1][1] + 1)
 
-    align_note = (
-        "Milestone marker aligns to <strong>Implement</strong> end; "
-        "Test may run after the marker."
-        if cfg.milestone_align == "implement"
-        else "Milestone marker aligns to <strong>Test</strong> end."
+    caps = ", ".join(
+        f"{_esc(cfg.teams[p].label)} {cfg.teams[p].capacity}" for p in PHASES
     )
-    mode_note = (
-        "Team overload allowed — SPs scheduled independently."
-        if cfg.allow_team_overload
-        else "Per-team pipeline — no same-team overlap."
-    )
+    if cfg.schedule_mode == "compress":
+        start_s = (
+            cfg.project_start.isoformat() if cfg.project_start else "?"
+        )
+        align_note = (
+            f"Compress mode from <strong>{_esc(start_s)}</strong> — "
+            "milestone markers are targets only (not schedule pins)."
+        )
+        mode_note = (
+            f"Ready-queue ASAP across milestones; team capacity [{caps}]."
+        )
+    else:
+        align_note = (
+            "Milestone marker aligns to <strong>Implement</strong> end; "
+            "Test may run after the marker."
+            if cfg.milestone_align == "implement"
+            else "Milestone marker aligns to <strong>Test</strong> end."
+        )
+        mode_note = (
+            f"Align mode — per-milestone ASAP then pin; team capacity [{caps}]."
+        )
 
     css = f"""
 :root {{
@@ -610,7 +664,7 @@ def render_html(schedule: Schedule) -> str:
   --holiday: #f0d8d0;
   --milestone: #9b2c2c;
   --day-w: 22px;
-  --label-w: 220px;
+  --label-w: 140px;
   --row-h: 34px;
   --bar-h: 22px;
   --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
@@ -975,7 +1029,7 @@ section.view h2 {{
   <div class="chart-shell"><div class="chart">
     {"".join(team_rows)}
   </div></div>
-  <p class="footnote">Overlapping bars on a team row indicate overload.</p>
+  <p class="footnote">Overlapping bars on a team row use that team’s capacity (same-day concurrency).</p>
 </section>
 </body>
 </html>
@@ -1009,7 +1063,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_OUT,
         help=f"output HTML path (default: {DEFAULT_OUT})",
     )
+    p.add_argument(
+        "--milestone",
+        nargs="+",
+        metavar="NAME",
+        help="only include these milestones (default: all)",
+    )
     return p.parse_args(argv)
+
+
+def filter_by_milestones(
+    tasks: list[TaskRow], config: Config, names: list[str]
+) -> tuple[list[TaskRow], Config]:
+    """Keep only the named milestones; preserve config.toml milestone order."""
+    unknown = [n for n in names if n not in config.milestones]
+    if unknown:
+        known = ", ".join(config.milestones)
+        raise SystemExit(
+            f"unknown milestone(s): {', '.join(unknown)} (known: {known})"
+        )
+    selected = set(names)
+    # Preserve config.toml key order, not CLI argument order
+    config.milestones = {
+        k: v for k, v in config.milestones.items() if k in selected
+    }
+    filtered = [t for t in tasks if t.milestone in selected]
+    if not filtered:
+        raise SystemExit(
+            f"no tasks for milestone(s): {', '.join(config.milestones)}"
+        )
+    return filtered, config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1022,6 +1105,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     config = load_config(args.config)
     tasks = load_tasks(args.tasks, config)
+    if args.milestone:
+        tasks, config = filter_by_milestones(tasks, config, args.milestone)
     schedule = build_schedule(tasks, config)
     html_text = render_html(schedule)
     args.out.write_text(html_text, encoding="utf-8")
