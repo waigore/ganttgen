@@ -2,7 +2,9 @@
 
 Pure-stdlib Python Gantt chart generator for stored-procedure / program delivery plans.
 
-Requires **Python 3.14+**. No third-party packages (and no `uv` at runtime).
+Requires **Python 3.14+**. No third-party packages at runtime (and no `uv` at runtime).
+
+Source lives under `src/ganttgen/`. The committed root `ganttgen.py` is a single-file merge produced by `build.py` (pymerger). Edit the modules, then rebuild before committing.
 
 ## Usage
 
@@ -36,3 +38,19 @@ With `--milestone`, only those milestones’ tasks are scheduled and the chart d
   - `project_start` — **required** for `compress`.
   - `milestone_align` — `implement` \| `test` (used by `align`).
   - `teams.*.capacity` — max simultaneous tasks per team per day (defaults: design 1, implement 3, test 3).
+
+## Development
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python build.py          # regenerate ganttgen.py from src/ganttgen/
+pytest                   # unit + e2e; coverage gate 85% on src/ganttgen/
+```
+
+Modular package (from a temp cwd so root `ganttgen.py` does not shadow the package):
+
+```bash
+PYTHONPATH=src python3.14 -m ganttgen --tasks tasks.csv --config config.toml --out gantt.html
+```
