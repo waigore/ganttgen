@@ -1,0 +1,6 @@
+# Dev / CI only — runtime ganttgen.py remains stdlib-only.
+pytest==9.2.0
+pytest-cov==7.1.0
+coverage==7.17.3
+pymerger==1.0.0
+astunparse==1.6.3

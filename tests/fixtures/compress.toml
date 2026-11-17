@@ -1,0 +1,38 @@
+title = "Compress Fixture"
+schedule_mode = "compress"
+project_start = 2026-09-01
+weekends = [5, 6]
+milestone_align = "implement"
+
+[milestones]
+M1 = 2026-10-15
+M2 = 2026-11-15
+
+[sizing.S]
+design = 1
+implement = 1
+test = 1
+
+[sizing.M]
+design = 2
+implement = 2
+test = 2
+
+[teams.design]
+label = "Design"
+color = "#3d6b8c"
+capacity = 1
+
+[teams.implement]
+label = "Implement"
+color = "#c4783a"
+capacity = 3
+
+[teams.test]
+label = "Test"
+color = "#4a7c59"
+capacity = 3
+
+[[holidays]]
+date = 2026-09-07
+name = "Fixture Holiday"

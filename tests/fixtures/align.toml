@@ -1,0 +1,33 @@
+title = "Align Fixture"
+schedule_mode = "align"
+milestone_align = "implement"
+weekends = [5, 6]
+
+[milestones]
+M1 = 2026-10-15
+M2 = 2026-11-20
+
+[sizing.S]
+design = 1
+implement = 1
+test = 1
+
+[sizing.M]
+design = 2
+implement = 2
+test = 2
+
+[teams.design]
+label = "Design"
+color = "#3d6b8c"
+capacity = 1
+
+[teams.implement]
+label = "Implement"
+color = "#c4783a"
+capacity = 2
+
+[teams.test]
+label = "Test"
+color = "#4a7c59"
+capacity = 2

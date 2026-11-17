@@ -1,0 +1,20 @@
+title = "Missing Start"
+schedule_mode = "compress"
+weekends = [5, 6]
+
+[milestones]
+M1 = 2026-10-15
+
+[sizing.S]
+design = 1
+implement = 1
+test = 1
+
+[teams.design]
+capacity = 1
+
+[teams.implement]
+capacity = 1
+
+[teams.test]
+capacity = 1

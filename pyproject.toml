@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ganttgen"
+version = "1.0.0"
+description = "Pure-stdlib Gantt chart generator"
+requires-python = ">=3.14"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = [
+  "--cov=ganttgen",
+  "--cov-report=term-missing",
+  "--cov-fail-under=85",
+]
+
+[tool.coverage.run]
+source = ["ganttgen"]
+branch = true
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_empty = true
