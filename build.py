@@ -53,6 +53,33 @@ def _patch_astunparse() -> None:
     astunparse.unparse = _unparse
 
 
+def _patch_pymerger_main_block() -> None:
+    """pymerger calls ast.If() with no args; that fails on Python 3.14+."""
+    import astunparse
+    import pymerger.merger as merger
+
+    def get_main_block(nodes):  # noqa: ANN001
+        removed_nodes = []
+        main_block = ast.If(test=ast.Constant(value=False), body=[], orelse=[])
+        found_test = False
+        for node in nodes:
+            if isinstance(node["node"], ast.If):
+                if (
+                    astunparse.unparse(node["node"].test).strip()
+                    == "(__name__ == '__main__')"
+                ):
+                    if not found_test:
+                        main_block.test = node["node"].test
+                        found_test = True
+                    removed_nodes.append(node)
+                    main_block.body += node["node"].body
+        for node in removed_nodes:
+            nodes.remove(node)
+        return main_block if len(main_block.body) > 0 else None
+
+    merger.get_main_block = get_main_block
+
+
 def build() -> Path:
     try:
         import pymerger
@@ -63,6 +90,7 @@ def build() -> Path:
         ) from exc
 
     _patch_astunparse()
+    _patch_pymerger_main_block()
 
     missing = [p for p in MERGE_FILES if not p.is_file()]
     if missing:

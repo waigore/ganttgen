@@ -115,6 +115,10 @@ def load_config(path: Path) -> Config:
         )
     holidays.sort(key=lambda h: h.date)
 
+    abc_raw = raw.get("actuals_book_capacity", True)
+    if not isinstance(abc_raw, bool):
+        raise SystemExit("actuals_book_capacity must be true or false")
+
     return Config(
         title=str(raw.get("title", "Delivery Plan")),
         milestone_align=align,
@@ -125,7 +129,54 @@ def load_config(path: Path) -> Config:
         sizing=sizing,
         teams=teams,
         holidays=holidays,
+        actuals_book_capacity=abc_raw,
     )
+
+
+def _parse_actuals(norm: dict[str, str], row_num: int) -> dict[str, tuple[date, date | None]]:
+    """Parse optional per-phase actual dates; enforce left-to-right prefix."""
+    actuals: dict[str, tuple[date, date | None]] = {}
+    for phase in PHASES:
+        start_raw = norm.get(f"{phase}_start", "")
+        end_raw = norm.get(f"{phase}_end", "")
+        if end_raw and not start_raw:
+            raise SystemExit(
+                f"tasks CSV row {row_num}: {phase}_end without {phase}_start"
+            )
+        if not start_raw:
+            continue
+        try:
+            start = date.fromisoformat(start_raw)
+        except ValueError as exc:
+            raise SystemExit(
+                f"tasks CSV row {row_num}: invalid {phase}_start {start_raw!r}"
+            ) from exc
+        end: date | None = None
+        if end_raw:
+            try:
+                end = date.fromisoformat(end_raw)
+            except ValueError as exc:
+                raise SystemExit(
+                    f"tasks CSV row {row_num}: invalid {phase}_end {end_raw!r}"
+                ) from exc
+            if end < start:
+                raise SystemExit(
+                    f"tasks CSV row {row_num}: {phase}_end before {phase}_start"
+                )
+        actuals[phase] = (start, end)
+
+    # Actuals must be a contiguous left-to-right prefix of PHASES.
+    seen_gap = False
+    for phase in PHASES:
+        if phase in actuals:
+            if seen_gap:
+                raise SystemExit(
+                    f"tasks CSV row {row_num}: actuals must be filled left-to-right "
+                    f"(got {phase} without earlier phase)"
+                )
+        else:
+            seen_gap = True
+    return actuals
 
 
 def load_tasks(path: Path, config: Config) -> list[TaskRow]:
@@ -143,7 +194,11 @@ def load_tasks(path: Path, config: Config) -> list[TaskRow]:
         if missing:
             raise SystemExit(f"tasks CSV missing columns: {', '.join(sorted(missing))}")
         for i, row in enumerate(reader):
-            norm = {k.strip().lower(): (v or "").strip() for k, v in row.items()}
+            norm = {
+                k.strip().lower(): (v or "").strip()
+                for k, v in row.items()
+                if k is not None
+            }
             tid = norm["id"]
             name = norm["name"]
             milestone = norm["milestone"]
@@ -156,8 +211,16 @@ def load_tasks(path: Path, config: Config) -> list[TaskRow]:
                 )
             if size not in config.sizing:
                 raise SystemExit(f"tasks CSV row {i + 2}: unknown size {size!r}")
+            actuals = _parse_actuals(norm, i + 2)
             tasks.append(
-                TaskRow(id=tid, name=name, milestone=milestone, size=size, index=i)
+                TaskRow(
+                    id=tid,
+                    name=name,
+                    milestone=milestone,
+                    size=size,
+                    index=i,
+                    actuals=actuals,
+                )
             )
     if not tasks:
         raise SystemExit("tasks CSV has no data rows")

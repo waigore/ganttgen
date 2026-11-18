@@ -92,19 +92,59 @@ def _find_slot(
     )
 
 
+def _seed_actuals(
+    tasks: list[TaskRow],
+    by_key: dict[str, SubTask],
+    config: Config,
+    occupancy: Occupancy,
+) -> dict[str, tuple[date, date]]:
+    """Place pinned phases from CSV actuals.
+
+    When ``config.actuals_book_capacity`` is true, books working days into
+    ``occupancy`` so auto-scheduled work cannot overlap them.
+    """
+    placed: dict[str, tuple[date, date]] = {}
+    for t in tasks:
+        for phase in PHASES:
+            if phase not in t.actuals:
+                continue
+            start, end_opt = t.actuals[phase]
+            k = f"{t.id}:{phase}"
+            st = by_key[k]
+            if end_opt is not None:
+                end = end_opt
+            else:
+                end = add_working_days(start, st.duration - 1, config)
+            st.start = start
+            st.end = end
+            placed[k] = (start, end)
+            if config.actuals_book_capacity:
+                _capacity_book(occupancy, phase, start, end, config)
+    return placed
+
+
 def _place_asap(
     tasks: list[TaskRow],
     config: Config,
     by_key: dict[str, SubTask],
     occupancy: Occupancy,
     earliest: date,
+    seeded: dict[str, tuple[date, date]] | None = None,
 ) -> dict[str, tuple[date, date]]:
-    """Greedy CSV-order ASAP placement; books into occupancy."""
-    placements: dict[str, tuple[date, date]] = {}
+    """Greedy CSV-order ASAP placement; books into occupancy.
+
+    Keys in ``seeded`` are skipped (already placed; capacity may already be
+    booked by ``_seed_actuals``). Returns the full placement map including
+    seeded entries.
+    """
+    placements: dict[str, tuple[date, date]] = dict(seeded or {})
     for t in tasks:
         prev_phase_end: date | None = None
         for phase in PHASES:
             k = f"{t.id}:{phase}"
+            if k in placements:
+                prev_phase_end = placements[k][1]
+                continue
             dur = by_key[k].duration
             not_before = earliest
             if prev_phase_end is not None:
@@ -147,11 +187,26 @@ def _schedule_align(
     ms = tasks[0].milestone
     pin_key = f"{tasks[-1].id}:{config.milestone_align}"
     pin_end = snap_back_to_working(config.milestones[ms], config)
-    placements = _place_asap(tasks, config, by_key, _empty_occupancy(), pin_end)
+    occupancy = _empty_occupancy()
+    seeded = _seed_actuals(tasks, by_key, config, occupancy)
+    # With historical actuals, pack the remainder from those dates; otherwise
+    # keep the classic relative pack that starts at the milestone pin day.
+    earliest = min((s for s, _ in seeded.values()), default=pin_end)
+    placements = _place_asap(
+        tasks, config, by_key, occupancy, earliest, seeded
+    )
     if pin_key not in placements:
         raise SystemExit(f"pin key missing from schedule: {pin_key}")
+
+    auto = {k: v for k, v in placements.items() if k not in seeded}
+    if pin_key in seeded:
+        # Align target already happened — leave absolute; write auto as packed.
+        _apply_placements(auto, by_key, 0, config)
+        return
+
     delta = working_day_delta(placements[pin_key][1], pin_end, config)
-    _apply_placements(placements, by_key, delta, config)
+    # Never move historical (seeded) bars.
+    _apply_placements(auto, by_key, delta, config)
     if by_key[pin_key].end != pin_end:
         raise SystemExit(
             f"failed to align {pin_key} to {pin_end.isoformat()} "
@@ -172,8 +227,8 @@ def _schedule_compress(
     pred_phase = {"design": None, "implement": "design", "test": "implement"}
 
     occupancy = _empty_occupancy()
-    pending = {f"{t.id}:{p}" for t in tasks for p in PHASES}
-    placed: dict[str, tuple[date, date]] = {}
+    placed = _seed_actuals(tasks, by_key, config, occupancy)
+    pending = {f"{t.id}:{p}" for t in tasks for p in PHASES} - placed.keys()
 
     while pending:
         best: tuple[date, int, int, str, date] | None = None
