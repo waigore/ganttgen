@@ -32,11 +32,15 @@ With `--milestone`, only those milestones’ tasks are scheduled and the chart d
 ## Inputs
 
 - **tasks.csv** — columns: `id`, `name`, `milestone`, `size` (`S`/`M`/`L`). UTF-8 with or without BOM. Duplicate `id` values are rejected (error lists line numbers). CSV order is the tie-break when several tasks are equally ready.
+  - Optional actuals: `design_start`, `design_end`, `implement_start`, `implement_end`, `test_start`, `test_end` (ISO dates). Pin start only to derive end from sizing duration, or pin start+end to fix the bar. End without start is an error. Actuals must be a left-to-right prefix of design → implement → test.
+  - Pinned phases are fixed on the chart. Later phases of the same task (and other ready work) schedule after the pinned end.
+  - Convention: put rows with actuals at the front of the CSV (not enforced).
 - **config.toml** — title, milestones, sizing, weekends, holidays, team colours/capacities, and:
   - `schedule_mode = "compress"` (default) — pack ASAP from `project_start` with a global ready queue across milestones (later-milestone work may run while earlier-milestone work is still open, up to capacity). Milestone dates are markers only.
   - `schedule_mode = "align"` — pack each milestone separately (per-milestone capacity), then shift so the last SP’s `milestone_align` phase ends on the milestone date.
   - `project_start` — **required** for `compress`.
   - `milestone_align` — `implement` \| `test` (used by `align`).
+  - `actuals_book_capacity` — default `true`; when true, pinned phases consume team capacity on working days so auto-scheduled work cannot overlap them. Set `false` to ignore pinned bars for capacity.
   - `teams.*.capacity` — max simultaneous tasks per team per day (defaults: design 1, implement 3, test 3).
 
 ## Development

@@ -49,6 +49,7 @@ def make_config(
     holidays: list[Holiday] | None = None,
     capacities: dict[str, int] | None = None,
     milestone_align: str = "implement",
+    actuals_book_capacity: bool = True,
 ) -> Config:
     caps = capacities or {"design": 1, "implement": 3, "test": 3}
     teams = {
@@ -73,6 +74,7 @@ def make_config(
         },
         teams=teams,
         holidays=holidays or [],
+        actuals_book_capacity=actuals_book_capacity,
     )
 
 

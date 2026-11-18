@@ -6,6 +6,8 @@ milestone_align = "implement"   # "implement" | "test" (used by schedule_mode = 
 # align = pack per milestone and pin last SP to the milestone date.
 schedule_mode = "compress"   # "compress" | "align"
 project_start = 2026-09-01   # required for compress
+# When true (default), pinned actuals consume team capacity on working days.
+actuals_book_capacity = true
 
 # Monday=0 … Sunday=6 — HK general holidays treat Sunday as weekly rest;
 # gazetted Saturdays are listed under [[holidays]].

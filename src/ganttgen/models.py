@@ -34,6 +34,8 @@ class TaskRow:
     milestone: str
     size: str
     index: int  # CSV order
+    # phase -> (start, optional end). End None means derive from sizing duration.
+    actuals: dict[str, tuple[date, date | None]] = field(default_factory=dict)
 
 
 @dataclass
@@ -47,6 +49,7 @@ class Config:
     sizing: dict[str, dict[str, int]]
     teams: dict[str, TeamStyle]
     holidays: list[Holiday]
+    actuals_book_capacity: bool = True
     holiday_dates: set[date] = field(default_factory=set)
 
     def __post_init__(self) -> None:

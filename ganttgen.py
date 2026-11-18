@@ -46,6 +46,7 @@ class TaskRow:
     milestone: str
     size: str
     index: int
+    actuals: dict[str, tuple[date, date | None]] = field(default_factory=dict)
 @dataclass
 class SubTask:
     sp_id: str
@@ -74,6 +75,36 @@ def parse_args(argv: list[str] | None=None) -> argparse.Namespace:
     p.add_argument('--out', type=Path, default=DEFAULT_OUT, help=f'output HTML path (default: {DEFAULT_OUT})')
     p.add_argument('--milestone', nargs='+', metavar='NAME', help='only include these milestones (default: all)')
     return p.parse_args(argv)
+def _parse_actuals(norm: dict[str, str], row_num: int) -> dict[str, tuple[date, date | None]]:
+    actuals: dict[str, tuple[date, date | None]] = {}
+    for phase in PHASES:
+        start_raw = norm.get(f'{phase}_start', '')
+        end_raw = norm.get(f'{phase}_end', '')
+        if end_raw and (not start_raw):
+            raise SystemExit(f'tasks CSV row {row_num}: {phase}_end without {phase}_start')
+        if not start_raw:
+            continue
+        try:
+            start = date.fromisoformat(start_raw)
+        except ValueError as exc:
+            raise SystemExit(f'tasks CSV row {row_num}: invalid {phase}_start {start_raw!r}') from exc
+        end: date | None = None
+        if end_raw:
+            try:
+                end = date.fromisoformat(end_raw)
+            except ValueError as exc:
+                raise SystemExit(f'tasks CSV row {row_num}: invalid {phase}_end {end_raw!r}') from exc
+            if end < start:
+                raise SystemExit(f'tasks CSV row {row_num}: {phase}_end before {phase}_start')
+        actuals[phase] = (start, end)
+    seen_gap = False
+    for phase in PHASES:
+        if phase in actuals:
+            if seen_gap:
+                raise SystemExit(f'tasks CSV row {row_num}: actuals must be filled left-to-right (got {phase} without earlier phase)')
+        else:
+            seen_gap = True
+    return actuals
 @dataclass
 class Config:
     title: str
@@ -85,6 +116,7 @@ class Config:
     sizing: dict[str, dict[str, int]]
     teams: dict[str, TeamStyle]
     holidays: list[Holiday]
+    actuals_book_capacity: bool = True
     holiday_dates: set[date] = field(default_factory=set)
 
     def __post_init__(self) -> None:
@@ -172,7 +204,10 @@ def load_config(path: Path) -> Config:
             raise SystemExit('each [[holidays]] entry needs a date')
         holidays.append(Holiday(date=_parse_date(item['date'], 'holiday'), name=str(item.get('name', 'Holiday'))))
     holidays.sort(key=lambda h: h.date)
-    return Config(title=str(raw.get('title', 'Delivery Plan')), milestone_align=align, schedule_mode=mode, project_start=project_start, weekends=weekends, milestones=milestones, sizing=sizing, teams=teams, holidays=holidays)
+    abc_raw = raw.get('actuals_book_capacity', True)
+    if not isinstance(abc_raw, bool):
+        raise SystemExit('actuals_book_capacity must be true or false')
+    return Config(title=str(raw.get('title', 'Delivery Plan')), milestone_align=align, schedule_mode=mode, project_start=project_start, weekends=weekends, milestones=milestones, sizing=sizing, teams=teams, holidays=holidays, actuals_book_capacity=abc_raw)
 def load_tasks(path: Path, config: Config) -> list[TaskRow]:
     if not path.is_file():
         raise SystemExit(f'Tasks CSV not found: {path}')
@@ -187,7 +222,7 @@ def load_tasks(path: Path, config: Config) -> list[TaskRow]:
         if missing:
             raise SystemExit(f"tasks CSV missing columns: {', '.join(sorted(missing))}")
         for i, row in enumerate(reader):
-            norm = {k.strip().lower(): (v or '').strip() for k, v in row.items()}
+            norm = {k.strip().lower(): (v or '').strip() for k, v in row.items() if k is not None}
             tid = norm['id']
             name = norm['name']
             milestone = norm['milestone']
@@ -198,7 +233,8 @@ def load_tasks(path: Path, config: Config) -> list[TaskRow]:
                 raise SystemExit(f'tasks CSV row {i + 2}: unknown milestone {milestone!r}')
             if size not in config.sizing:
                 raise SystemExit(f'tasks CSV row {i + 2}: unknown size {size!r}')
-            tasks.append(TaskRow(id=tid, name=name, milestone=milestone, size=size, index=i))
+            actuals = _parse_actuals(norm, i + 2)
+            tasks.append(TaskRow(id=tid, name=name, milestone=milestone, size=size, index=i, actuals=actuals))
     if not tasks:
         raise SystemExit('tasks CSV has no data rows')
     by_id: dict[str, list[int]] = {}
@@ -369,16 +405,38 @@ def _find_slot(phase: str, not_before: date, duration: int, occupancy: Occupancy
             return (start, end)
         start = add_working_days(start, 1, config)
     raise SystemExit(f'could not place {phase} ({duration}d) under capacity {capacity} starting from {not_before.isoformat()}')
+def _seed_actuals(tasks: list[TaskRow], by_key: dict[str, SubTask], config: Config, occupancy: Occupancy) -> dict[str, tuple[date, date]]:
+    placed: dict[str, tuple[date, date]] = {}
+    for t in tasks:
+        for phase in PHASES:
+            if phase not in t.actuals:
+                continue
+            start, end_opt = t.actuals[phase]
+            k = f'{t.id}:{phase}'
+            st = by_key[k]
+            if end_opt is not None:
+                end = end_opt
+            else:
+                end = add_working_days(start, st.duration - 1, config)
+            st.start = start
+            st.end = end
+            placed[k] = (start, end)
+            if config.actuals_book_capacity:
+                _capacity_book(occupancy, phase, start, end, config)
+    return placed
 def _apply_placements(placements: dict[str, tuple[date, date]], by_key: dict[str, SubTask], delta: int, config: Config) -> None:
     for k, (start, end) in placements.items():
         by_key[k].start = shift_working_days(start, delta, config)
         by_key[k].end = shift_working_days(end, delta, config)
-def _place_asap(tasks: list[TaskRow], config: Config, by_key: dict[str, SubTask], occupancy: Occupancy, earliest: date) -> dict[str, tuple[date, date]]:
-    placements: dict[str, tuple[date, date]] = {}
+def _place_asap(tasks: list[TaskRow], config: Config, by_key: dict[str, SubTask], occupancy: Occupancy, earliest: date, seeded: dict[str, tuple[date, date]] | None=None) -> dict[str, tuple[date, date]]:
+    placements: dict[str, tuple[date, date]] = dict(seeded or {})
     for t in tasks:
         prev_phase_end: date | None = None
         for phase in PHASES:
             k = f'{t.id}:{phase}'
+            if k in placements:
+                prev_phase_end = placements[k][1]
+                continue
             dur = by_key[k].duration
             not_before = earliest
             if prev_phase_end is not None:
@@ -397,8 +455,8 @@ def _schedule_compress(tasks: list[TaskRow], config: Config, by_key: dict[str, S
     phase_index = {p: i for i, p in enumerate(PHASES)}
     pred_phase = {'design': None, 'implement': 'design', 'test': 'implement'}
     occupancy = _empty_occupancy()
-    pending = {f'{t.id}:{p}' for t in tasks for p in PHASES}
-    placed: dict[str, tuple[date, date]] = {}
+    placed = _seed_actuals(tasks, by_key, config, occupancy)
+    pending = {f'{t.id}:{p}' for t in tasks for p in PHASES} - placed.keys()
     while pending:
         best: tuple[date, int, int, str, date] | None = None
         for key in pending:
@@ -430,11 +488,18 @@ def _schedule_align(tasks: list[TaskRow], config: Config, by_key: dict[str, SubT
     ms = tasks[0].milestone
     pin_key = f'{tasks[-1].id}:{config.milestone_align}'
     pin_end = snap_back_to_working(config.milestones[ms], config)
-    placements = _place_asap(tasks, config, by_key, _empty_occupancy(), pin_end)
+    occupancy = _empty_occupancy()
+    seeded = _seed_actuals(tasks, by_key, config, occupancy)
+    earliest = min((s for s, _ in seeded.values()), default=pin_end)
+    placements = _place_asap(tasks, config, by_key, occupancy, earliest, seeded)
     if pin_key not in placements:
         raise SystemExit(f'pin key missing from schedule: {pin_key}')
+    auto = {k: v for k, v in placements.items() if k not in seeded}
+    if pin_key in seeded:
+        _apply_placements(auto, by_key, 0, config)
+        return
     delta = working_day_delta(placements[pin_key][1], pin_end, config)
-    _apply_placements(placements, by_key, delta, config)
+    _apply_placements(auto, by_key, delta, config)
     if by_key[pin_key].end != pin_end:
         raise SystemExit(f'failed to align {pin_key} to {pin_end.isoformat()} (got {by_key[pin_key].end.isoformat()})')
 def build_schedule(tasks: list[TaskRow], config: Config) -> Schedule:

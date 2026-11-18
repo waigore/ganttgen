@@ -14,8 +14,21 @@ def test_load_compress_config(fixtures_dir: Path) -> None:
     assert cfg.schedule_mode == "compress"
     assert cfg.project_start is not None
     assert "M1" in cfg.milestones
+    assert cfg.actuals_book_capacity is True  # default when omitted
     named = [h for h in cfg.holidays if h.name == "Fixture Holiday"]
     assert named[0].date.isoformat() == "2026-09-07"
+
+
+def test_actuals_book_capacity_must_be_bool(tmp_path: Path) -> None:
+    path = tmp_path / "abc.toml"
+    path.write_text(
+        'schedule_mode="align"\nactuals_book_capacity="yes"\n'
+        "[milestones]\nM1=2026-10-01\n"
+        "[sizing.S]\ndesign=1\nimplement=1\ntest=1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="actuals_book_capacity"):
+        load_config(path)
 
 
 def test_load_align_config(fixtures_dir: Path) -> None:
@@ -149,3 +162,42 @@ def test_bad_team_capacity(tmp_path: Path) -> None:
     )
     with pytest.raises(SystemExit, match="capacity"):
         load_config(path)
+
+
+def test_load_actuals_ok(tmp_path: Path, fixtures_dir: Path) -> None:
+    from datetime import date
+
+    cfg = load_config(fixtures_dir / "compress.toml")
+    path = tmp_path / "actuals.csv"
+    path.write_text(
+        "id,name,milestone,size,design_start,design_end,implement_start\n"
+        "SP1,One,M1,S,2026-08-03,2026-08-05,2026-08-06\n"
+        "SP2,Two,M1,S,,,\n",
+        encoding="utf-8",
+    )
+    tasks = load_tasks(path, cfg)
+    assert tasks[0].actuals["design"] == (date(2026, 8, 3), date(2026, 8, 5))
+    assert tasks[0].actuals["implement"] == (date(2026, 8, 6), None)
+    assert tasks[1].actuals == {}
+
+
+def test_actuals_end_without_start(tmp_path: Path, fixtures_dir: Path) -> None:
+    cfg = load_config(fixtures_dir / "compress.toml")
+    path = tmp_path / "bad.csv"
+    path.write_text(
+        "id,name,milestone,size,design_end\nSP1,One,M1,S,2026-08-05\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="design_end without design_start"):
+        load_tasks(path, cfg)
+
+
+def test_actuals_must_be_prefix(tmp_path: Path, fixtures_dir: Path) -> None:
+    cfg = load_config(fixtures_dir / "compress.toml")
+    path = tmp_path / "gap.csv"
+    path.write_text(
+        "id,name,milestone,size,implement_start\nSP1,One,M1,S,2026-08-06\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="left-to-right"):
+        load_tasks(path, cfg)
